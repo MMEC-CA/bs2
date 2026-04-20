@@ -1,0 +1,13 @@
+{
+  "name": "MMEC-CA workspace",
+  "image": "mcr.microsoft.com/devcontainers/universal:latest",
+  "postCreateCommand": "bash .devcontainer/clone-refs.sh",
+  "postStartCommand": "bash .devcontainer/clone-refs.sh",
+  "customizations": {
+    "codespaces": {
+      "repositories": {
+        "MMEC-CA/*": { "permissions": "read-all" }
+      }
+    }
+  }
+}
