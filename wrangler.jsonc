@@ -1,16 +1,26 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "bs2",
+  "main": "./src/worker.js",
   "compatibility_date": "2026-04-16",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
-    "directory": "."
+    "directory": ".",
+    "binding": "ASSETS"
   },
   "routes": [
     {
       "pattern": "erd.mmec.ca/bs2/*",
       "zone_name": "mmec.ca"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SIGNALING_ROOM", "class_name": "SignalingRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SignalingRoom"] }
   ],
   "observability": {
     "enabled": true

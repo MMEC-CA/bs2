@@ -1,6 +1,7 @@
 .git/**
 .github/**
 .devcontainer/**
+src/**
 .gitignore
 .assetsignore
 wrangler.jsonc
