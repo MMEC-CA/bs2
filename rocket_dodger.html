@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rocket Dodger - Neon Space</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+
+        #root {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        .ui-layer {
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+        }
+
+        .hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            text-shadow: 0 0 10px #0ff;
+        }
+
+        .power-ups-hud {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .power-up-bar {
+            width: 150px;
+            height: 10px;
+            background: #222;
+            border: 1px solid #444;
+            position: relative;
+        }
+
+        .power-up-fill {
+            height: 100%;
+            transition: width 0.1s linear;
+        }
+
+        .menu-card {
+            background: rgba(20, 20, 30, 0.9);
+            border: 2px solid #0ff;
+            box-shadow: 0 0 20px #0ff;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: #0ff;
+            text-shadow: 0 0 15px #0ff;
+            letter-spacing: 5px;
+        }
+
+        .btn {
+            background: transparent;
+            border: 2px solid #0ff;
+            color: #0ff;
+            padding: 15px 30px;
+            margin: 10px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-radius: 5px;
+            width: 200px;
+            display: block;
+        }
+
+        .btn:hover {
+            background: #0ff;
+            color: #000;
+            box-shadow: 0 0 20px #0ff;
+        }
+
+        .btn-easy { border-color: #0f0; color: #0f0; }
+        .btn-easy:hover { background: #0f0; box-shadow: 0 0 20px #0f0; color: #000; }
+        .btn-hard { border-color: #f0f; color: #f0f; }
+        .btn-hard:hover { background: #f0f; box-shadow: 0 0 20px #f0f; color: #000; }
+        .btn-insane { border-color: #f00; color: #f00; }
+        .btn-insane:hover { background: #f00; box-shadow: 0 0 20px #f00; color: #000; }
+
+        .victory-text { color: #0f0; text-shadow: 0 0 15px #0f0; }
+        .gameover-text { color: #f00; text-shadow: 0 0 15px #f00; }
+    </style>
+</head>
+<body>
+    <canvas id="game-canvas"></canvas>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Constants
+        const POWERUP_DURATION = 5000; // 5 seconds default
+        const INVINCIBILITY_DURATION = 3000; // 3 seconds as requested
+        const DIFFICULTIES = {
+            EASY: { goal: 50, spawnRate: 0.02, homingChance: 0 },
+            HARD: { goal: 100, spawnRate: 0.04, homingChance: 0.2 },
+            INSANE: { goal: 150, spawnRate: 0.06, homingChance: 0.4 }
+        };
+
+        // Classes
+        class Particle {
+            constructor(x, y, color, size, vx, vy) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = size;
+                this.vx = vx;
+                this.vy = vy;
+                this.life = 1.0;
+                this.decay = Math.random() * 0.02 + 0.01;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Rocket {
+            constructor(canvas, difficulty, isHoming = false) {
+                this.canvas = canvas;
+                this.isHoming = isHoming;
+                this.radius = 8;
+                this.speed = Math.random() * 2 + (isHoming ? 2 : 4);
+                
+                // Spawn from outside edges
+                const side = Math.floor(Math.random() * 4);
+                if (side === 0) { // Top
+                    this.x = Math.random() * canvas.width;
+                    this.y = -20;
+                } else if (side === 1) { // Right
+                    this.x = canvas.width + 20;
+                    this.y = Math.random() * canvas.height;
+                } else if (side === 2) { // Bottom
+                    this.x = Math.random() * canvas.width;
+                    this.y = canvas.height + 20;
+                } else { // Left
+                    this.x = -20;
+                    this.y = Math.random() * canvas.height;
+                }
+
+                this.angle = Math.atan2(canvas.height/2 - this.y, canvas.width/2 - this.x);
+                this.vx = Math.cos(this.angle) * this.speed;
+                this.vy = Math.sin(this.angle) * this.speed;
+                this.dodged = false;
+            }
+
+            update(player) {
+                if (this.isHoming && !player.invisible) {
+                    const targetAngle = Math.atan2(player.y - this.y, player.x - this.x);
+                    let diff = targetAngle - this.angle;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    this.angle += diff * 0.02; // Rotation speed
+                    this.vx = Math.cos(this.angle) * this.speed;
+                    this.vy = Math.sin(this.angle) * this.speed;
+                }
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Check if dodged (out of bounds)
+                if (!this.dodged && (this.x < -100 || this.x > this.canvas.width + 100 || this.y < -100 || this.y > this.canvas.height + 100)) {
+                    this.dodged = true;
+                    return true;
+                }
+                return false;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.isHoming ? "#f0f" : "#f00";
+                ctx.strokeStyle = this.isHoming ? "#f0f" : "#f00";
+                ctx.lineWidth = 2;
+                
+                // Rocket shape
+                ctx.beginPath();
+                ctx.moveTo(10, 0);
+                ctx.lineTo(-10, -5);
+                ctx.lineTo(-10, 5);
+                ctx.closePath();
+                ctx.stroke();
+
+                // Engine glow
+                ctx.fillStyle = "#ff0";
+                ctx.beginPath();
+                ctx.arc(-12, 0, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        class PowerUp {
+            constructor(canvas) {
+                this.x = Math.random() * (canvas.width - 40) + 20;
+                this.y = Math.random() * (canvas.height - 40) + 20;
+                this.radius = 12;
+                this.type = ['invisibility', 'speed', 'invincibility'][Math.floor(Math.random() * 3)];
+                this.angle = 0;
+            }
+            update() {
+                this.angle += 0.05;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                let color = "#0ff";
+                if (this.type === 'speed') color = "#ff0";
+                if (this.type === 'invincibility') color = "#fff";
+                
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = color;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                
+                ctx.strokeRect(-8, -8, 16, 16);
+                ctx.restore();
+            }
+        }
+
+        const App = () => {
+            const [gameState, setGameState] = useState('START'); // START, PLAYING, GAMEOVER, VICTORY
+            const [difficulty, setDifficulty] = useState(null);
+            const [score, setScore] = useState(0);
+            const [activePowerUps, setActivePowerUps] = useState({
+                invisibility: 0,
+                speed: 0,
+                invincibility: 0
+            });
+
+            const canvasRef = useRef(null);
+            const gameData = useRef({
+                player: { x: 0, y: 0, vx: 0, vy: 0, radius: 15, invisible: false, speed: false, invincible: false },
+                rockets: [],
+                powerups: [],
+                particles: [],
+                stars: [],
+                keys: {},
+                lastTime: 0,
+                frameId: null
+            });
+
+            useEffect(() => {
+                const canvas = document.getElementById('game-canvas');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                canvasRef.current = canvas;
+
+                // Init stars
+                const stars = [];
+                for (let i = 0; i < 200; i++) {
+                    stars.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height,
+                        size: Math.random() * 2,
+                        speed: Math.random() * 0.5 + 0.1
+                    });
+                }
+                gameData.current.stars = stars;
+                gameData.current.player.x = canvas.width / 2;
+                gameData.current.player.y = canvas.height / 2;
+
+                const handleKeyDown = (e) => gameData.current.keys[e.code] = true;
+                const handleKeyUp = (e) => gameData.current.keys[e.code] = false;
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('keyup', handleKeyUp);
+                window.addEventListener('resize', () => {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                });
+
+                return () => {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('keyup', handleKeyUp);
+                };
+            }, []);
+
+            const startGame = (diffKey) => {
+                const diff = DIFFICULTIES[diffKey];
+                setDifficulty(diff);
+                setScore(0);
+                setGameState('PLAYING');
+                setActivePowerUps({ invisibility: 0, speed: 0, invincibility: 0 });
+                
+                gameData.current.rockets = [];
+                gameData.current.powerups = [];
+                gameData.current.particles = [];
+                gameData.current.player = { 
+                    x: canvasRef.current.width / 2, 
+                    y: canvasRef.current.height / 2, 
+                    vx: 0, vy: 0, 
+                    radius: 15, 
+                    invisible: false, speed: false, invincible: false 
+                };
+                
+                gameData.current.lastTime = performance.now();
+                if (gameData.current.frameId) cancelAnimationFrame(gameData.current.frameId);
+                gameData.current.frameId = requestAnimationFrame(gameLoop);
+            };
+
+            const gameLoop = (time) => {
+                const dt = time - gameData.current.lastTime;
+                gameData.current.lastTime = time;
+
+                update(dt);
+                draw();
+
+                if (gameState === 'PLAYING') {
+                    gameData.current.frameId = requestAnimationFrame(gameLoop);
+                }
+            };
+
+            const update = (dt) => {
+                const { player, keys, rockets, powerups, particles, stars } = gameData.current;
+                const canvas = canvasRef.current;
+                const diff = DIFFICULTIES[Object.keys(DIFFICULTIES).find(k => DIFFICULTIES[k] === difficulty)];
+
+                // Update Stars (parallax)
+                stars.forEach(s => {
+                    s.y += s.speed;
+                    if (s.y > canvas.height) s.y = 0;
+                });
+
+                // Player Movement
+                const accel = player.speed ? 0.8 : 0.5;
+                const friction = 0.95;
+                if (keys['ArrowUp'] || keys['KeyW']) player.vy -= accel;
+                if (keys['ArrowDown'] || keys['KeyS']) player.vy += accel;
+                if (keys['ArrowLeft'] || keys['KeyA']) player.vx -= accel;
+                if (keys['ArrowRight'] || keys['KeyD']) player.vx += accel;
+
+                player.vx *= friction;
+                player.vy *= friction;
+                player.x += player.vx;
+                player.y += player.vy;
+
+                // Screen boundaries
+                if (player.x < player.radius) { player.x = player.radius; player.vx *= -0.5; }
+                if (player.x > canvas.width - player.radius) { player.x = canvas.width - player.radius; player.vx *= -0.5; }
+                if (player.y < player.radius) { player.y = player.radius; player.vy *= -0.5; }
+                if (player.y > canvas.height - player.radius) { player.y = canvas.height - player.radius; player.vy *= -0.5; }
+
+                // Power-up durations
+                setActivePowerUps(prev => {
+                    const next = { ...prev };
+                    let changed = false;
+                    Object.keys(next).forEach(key => {
+                        if (next[key] > 0) {
+                            next[key] = Math.max(0, next[key] - dt);
+                            changed = true;
+                        }
+                    });
+                    player.invisible = next.invisibility > 0;
+                    player.speed = next.speed > 0;
+                    player.invincible = next.invincibility > 0;
+                    return changed ? next : prev;
+                });
+
+                // Spawn Rockets
+                if (Math.random() < difficulty.spawnRate) {
+                    const isHoming = Math.random() < difficulty.homingChance;
+                    rockets.push(new Rocket(canvas, difficulty, isHoming));
+                }
+
+                // Spawn Power-ups
+                if (Math.random() < 0.005 && powerups.length < 2) {
+                    powerups.push(new PowerUp(canvas));
+                }
+
+                // Update Rockets
+                for (let i = rockets.length - 1; i >= 0; i--) {
+                    if (rockets[i].update(player)) {
+                        rockets.splice(i, 1);
+                        setScore(s => s + 1);
+                    } else {
+                        // Collision check
+                        const r = rockets[i];
+                        const dist = Math.hypot(player.x - r.x, player.y - r.y);
+                        if (dist < player.radius + r.radius) {
+                            if (player.invincible) {
+                                // Destroy rocket if invincible
+                                rockets.splice(i, 1);
+                                createExplosion(r.x, r.y, "#fff");
+                            } else {
+                                endGame('GAMEOVER');
+                            }
+                        }
+                    }
+                }
+
+                // Update Power-ups
+                for (let i = powerups.length - 1; i >= 0; i--) {
+                    const p = powerups[i];
+                    p.update();
+                    const dist = Math.hypot(player.x - p.x, player.y - p.y);
+                    if (dist < player.radius + p.radius) {
+                        const duration = p.type === 'invincibility' ? INVINCIBILITY_DURATION : POWERUP_DURATION;
+                        setActivePowerUps(prev => ({ ...prev, [p.type]: duration }));
+                        powerups.splice(i, 1);
+                    }
+                }
+
+                // Update Particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    particles[i].update();
+                    if (particles[i].life <= 0) particles.splice(i, 1);
+                }
+
+                // Check Victory
+                setScore(currentScore => {
+                    if (currentScore >= difficulty.goal && gameState === 'PLAYING') {
+                        setTimeout(() => endGame('VICTORY'), 10);
+                    }
+                    return currentScore;
+                });
+            };
+
+            const createExplosion = (x, y, color) => {
+                for (let i = 0; i < 20; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 2;
+                    gameData.current.particles.push(new Particle(
+                        x, y, color, Math.random() * 3 + 1,
+                        Math.cos(angle) * speed, Math.sin(angle) * speed
+                    ));
+                }
+            };
+
+            const endGame = (status) => {
+                setGameState(status);
+                if (gameData.current.frameId) cancelAnimationFrame(gameData.current.frameId);
+                if (status === 'GAMEOVER') {
+                    createExplosion(gameData.current.player.x, gameData.current.player.y, "#0ff");
+                }
+            };
+
+            const draw = () => {
+                const ctx = canvasRef.current.getContext('2d');
+                const { player, rockets, powerups, particles, stars } = gameData.current;
+
+                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+                // Stars
+                ctx.fillStyle = "#fff";
+                stars.forEach(s => {
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Particles
+                particles.forEach(p => p.draw(ctx));
+
+                // Powerups
+                powerups.forEach(p => p.draw(ctx));
+
+                // Rockets
+                rockets.forEach(r => r.draw(ctx));
+
+                // Player
+                ctx.save();
+                ctx.translate(player.x, player.y);
+                
+                if (player.invisible) ctx.globalAlpha = 0.3;
+                
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = "#0ff";
+                if (player.invincible) ctx.shadowColor = "#fff";
+                if (player.speed) ctx.shadowColor = "#ff0";
+                
+                ctx.strokeStyle = ctx.shadowColor;
+                ctx.lineWidth = 3;
+
+                // Ship shape
+                ctx.beginPath();
+                ctx.moveTo(0, -15);
+                ctx.lineTo(-12, 12);
+                ctx.lineTo(0, 5);
+                ctx.lineTo(12, 12);
+                ctx.closePath();
+                ctx.stroke();
+
+                if (player.invincible) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+                    ctx.setLineDash([5, 5]);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            };
+
+            return (
+                <div style={{ width: '100%', height: '100%' }}>
+                    <div className="hud">
+                        <div style={{ fontSize: '1.5rem' }}>DODGED: {score} / {difficulty?.goal || 0}</div>
+                        <div style={{ fontSize: '1rem', opacity: 0.7 }}>LEVEL: {Object.keys(DIFFICULTIES).find(k => DIFFICULTIES[k] === difficulty) || 'NONE'}</div>
+                    </div>
+
+                    <div className="power-ups-hud">
+                        {activePowerUps.invisibility > 0 && (
+                            <div>
+                                <div style={{ color: '#0ff', fontSize: '0.8rem' }}>INVISIBILITY</div>
+                                <div className="power-up-bar"><div className="power-up-fill" style={{ width: `${(activePowerUps.invisibility / POWERUP_DURATION) * 100}%`, background: '#0ff' }}></div></div>
+                            </div>
+                        )}
+                        {activePowerUps.speed > 0 && (
+                            <div>
+                                <div style={{ color: '#ff0', fontSize: '0.8rem' }}>SPEED</div>
+                                <div className="power-up-bar"><div className="power-up-fill" style={{ width: `${(activePowerUps.speed / POWERUP_DURATION) * 100}%`, background: '#ff0' }}></div></div>
+                            </div>
+                        )}
+                        {activePowerUps.invincibility > 0 && (
+                            <div>
+                                <div style={{ color: '#fff', fontSize: '0.8rem' }}>INVINCIBILITY</div>
+                                <div className="power-up-bar"><div className="power-up-fill" style={{ width: `${(activePowerUps.invincibility / INVINCIBILITY_DURATION) * 100}%`, background: '#fff' }}></div></div>
+                            </div>
+                        )}
+                    </div>
+
+                    {gameState === 'START' && (
+                        <div className="ui-layer">
+                            <div className="menu-card">
+                                <h1>ROCKET DODGER</h1>
+                                <p>Dodge the rockets. Stay alive.</p>
+                                <button className="btn btn-easy" onClick={() => startGame('EASY')}>EASY (50)</button>
+                                <button className="btn btn-hard" onClick={() => startGame('HARD')}>HARD (100)</button>
+                                <button className="btn btn-insane" onClick={() => startGame('INSANE')}>INSANE (150)</button>
+                                <div style={{ marginTop: '20px', fontSize: '0.8rem', opacity: 0.8 }}>
+                                    WASD or ARROWS to MOVE
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {gameState === 'GAMEOVER' && (
+                        <div className="ui-layer">
+                            <div className="menu-card">
+                                <h1 className="gameover-text">CRASHED!</h1>
+                                <p>You dodged {score} rockets.</p>
+                                <button className="btn" onClick={() => setGameState('START')}>TRY AGAIN</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {gameState === 'VICTORY' && (
+                        <div className="ui-layer">
+                            <div className="menu-card">
+                                <h1 className="victory-text">VICTORY!</h1>
+                                <p>You dodged all {difficulty.goal} rockets!</p>
+                                <button className="btn" onClick={() => setGameState('START')}>PLAY AGAIN</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
